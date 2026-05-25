@@ -1,5 +1,5 @@
 # app/api/ai_assistant.py
-# WORLD-CLASS MEDICAL AI CHAT - 100% FREE
+# WORLD-CLASS MEDICAL AI CHAT - 100% FREE WITH EXTENDED REPORT EXTRACTION
 
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
@@ -23,7 +23,7 @@ class ReportQuery(BaseModel):
     question: Optional[str] = None
 
 # ==========================================
-# 🧠 MAIN CHAT ENDPOINT
+# 🧠 MAIN CHAT ENDPOINTS
 # ==========================================
 
 @router.post("/chat")
@@ -53,20 +53,32 @@ def smart_chat(request: ChatRequest):
 
 @router.post("/chat/report")
 def chat_about_report(query: ReportQuery, db: Session = Depends(get_db)):
-    """Chat about a specific medical report"""
+    """Chat about a specific medical report - FULL VISIBILITY FOR GROQ/AI CLARITY"""
     report = db.query(MedicalReport).filter(MedicalReport.id == query.report_id).first()
     
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
     
-    report_text = f"Report: {report.title}. Type: {report.report_type}."
-    if report.diagnosis:
+    report_text = f"Report Title: {report.title}. Type: {report.report_type}."
+    if hasattr(report, 'diagnosis') and report.diagnosis:
         report_text += f" Diagnosis: {report.diagnosis}."
+        
+    # FIX: Removed the [:500] limit so Groq/AI can evaluate the entire scanned laboratory file content
     if report.extracted_text:
-        report_text += f" Details: {report.extracted_text[:500]}"
+        report_text += f" Complete Extracted Details: {report.extracted_text}"
+    if hasattr(report, 'test_values') and report.test_values:
+        report_text += f" Parsed Test Key Values: {report.test_values}"
     
-    question = query.question or "Explain this report to me in simple language"
-    full_message = f"About this medical report: {report_text}. My question: {question}"
+    question = query.question or "Explain this report to me in simple language, highlight warnings, and verify if values are okay."
+    
+    full_message = f"""You are the expert medical assistant for the MAHFOOZ ecosystem. 
+Review the following complete digital lab extraction:
+---
+{report_text}
+---
+Patient Question: {question}
+
+Provide a reassuring, highly detailed response translating medical jargon into clean, plain English."""
     
     response = ai.chat(full_message)
     
@@ -90,8 +102,10 @@ def explain_report(query: ReportQuery, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Report not found")
     
     text = f"Explain this {report.report_type} report titled '{report.title}'"
-    if report.diagnosis:
+    if hasattr(report, 'diagnosis') and report.diagnosis:
         text += f" with diagnosis: {report.diagnosis}"
+    if report.extracted_text:
+        text += f" Here is the document text data: {report.extracted_text}"
     if query.question:
         text += f". Also answer: {query.question}"
     
@@ -126,7 +140,7 @@ def get_categories():
 @router.get("/health-tips")
 def get_health_tips():
     """Get daily health tips"""
-    response = ai.chat("Give me 5 health tips")
+    response = ai.chat("Give me 5 practical daily personal health or hygiene tips.")
     return {"success": True, "tips": response}
 
 @router.get("/emergency")
