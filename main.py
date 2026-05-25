@@ -4,10 +4,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import engine, Base
-from app.models import user, family, medicine, report, doctor_note
+from app.models import user, family as family_model, medicine, report, doctor_note
 
-# Import all API routes
-from app.api import auth, family, medicines, reports, doctor_notes, scanner, ai_assistant, sharing, pregnancy
+# Import all API routes with unique aliases to prevent python namespace collisions
+from app.api import auth
+from app.api import family as family_router
+from app.api import medicines
+from app.api import reports
+from app.api import doctor_notes
+from app.api import scanner
+from app.api import ai_assistant
+from app.api import sharing
+from app.api import pregnancy
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -28,9 +36,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include all API routes
+# Include all API routers safely using the new aliases
 app.include_router(auth.router, prefix="/api/auth", tags=["🔐 Authentication"])
-app.include_router(family.router, prefix="/api/family", tags=["👨‍👩‍👧‍👦 Family"])
+app.include_router(family_router.router, prefix="/api/family", tags=["👨‍👩‍👧‍👦 Family"])
 app.include_router(medicines.router, prefix="/api/medicines", tags=["💊 Medicines"])
 app.include_router(reports.router, prefix="/api/reports", tags=["📄 Reports"])
 app.include_router(doctor_notes.router, prefix="/api/doctor-notes", tags=["🏥 Doctor Notes"])
@@ -46,7 +54,6 @@ def home():
         "app": "MAHFOOZ Family Medical Wallet",
         "version": "1.0.0",
         "status": "✅ Server is running",
-        "api_docs": "http://127.0.0.1:8000/docs",
         "endpoints": {
             "auth": "/api/auth",
             "family": "/api/family",
