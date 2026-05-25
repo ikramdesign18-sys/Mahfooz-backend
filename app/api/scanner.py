@@ -1,5 +1,5 @@
 # app/api/scanner.py
-# PROFESSIONAL DOCUMENT SCANNER API
+# PROFESSIONAL DOCUMENT SCANNER API - LIGHTWEIGHT PERFORMANCE VERSION
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from fastapi.responses import FileResponse
 from app.services.professional_scanner import scanner
@@ -10,13 +10,8 @@ from datetime import date
 import os, shutil, uuid, re
 import pytesseract
 from PIL import Image
-import easyocr
 
 router = APIRouter()
-try:
-    reader = easyocr.Reader(['en'], gpu=False)
-except:
-    reader = None
 
 @router.post("/scan")
 async def scan_document(
@@ -30,9 +25,13 @@ async def scan_document(
     if file.content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Please upload JPG or PNG images")
     
+    # Render-safe directory setup using our runtime base
+    from app.core.config import UPLOAD_FOLDER
+    temp_dir = os.path.join(UPLOAD_FOLDER, "temp")
+    os.makedirs(temp_dir, exist_ok=True)
+    
     temp_filename = f"temp_{uuid.uuid4().hex[:8]}.jpg"
-    temp_path = f"uploads/temp/{temp_filename}"
-    os.makedirs("uploads/temp", exist_ok=True)
+    temp_path = os.path.join(temp_dir, temp_filename)
     
     with open(temp_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -44,37 +43,14 @@ async def scan_document(
             os.remove(temp_path)
         raise HTTPException(status_code=500, detail=result.get("error", "Scanning failed"))
     
-    # Extract text using PaddleOCR (BEST free OCR)
+    # ⚡ EXCLUSIVELY USE PYTESSERACT (Bypasses Memory Crashes)
     extracted_text = ""
     try:
-        from paddleocr import PaddleOCR
-        paddle_ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
-        ocr_result = paddle_ocr.ocr(result["enhanced_path"], cls=True)
-        if ocr_result and ocr_result[0]:
-            lines = []
-            for line in ocr_result[0]:
-                text = line[1][0]
-                confidence = line[1][1]
-                if confidence > 0.5:
-                    lines.append(text)
-            extracted_text = '\n'.join(lines)
+        img = Image.open(result["enhanced_path"])
+        extracted_text = pytesseract.image_to_string(img, config='--psm 6')
     except Exception as e:
-        print(f"PaddleOCR error: {e}")
-        # Fallback to EasyOCR
-        try:
-            if reader:
-                ocr_results = reader.readtext(result["enhanced_path"])
-                extracted_text = ' '.join([r[1] for r in ocr_results if r[2] > 0.3])
-        except:
-            pass
-    
-    # Fallback to Tesseract
-    if not extracted_text:
-        try:
-            img = Image.open(result["enhanced_path"])
-            extracted_text = pytesseract.image_to_string(img, config='--psm 6')
-        except:
-            extracted_text = "Text extraction failed"
+        print(f"Tesseract core extraction exception: {e}")
+        extracted_text = "Text extraction failed"
     
     # Extract test values - try table format first
     test_values = {}
@@ -82,16 +58,13 @@ async def scan_document(
     # Parse table format: lines with numbers in columns
     lines = extracted_text.split('\n')
     for line in lines:
-        # Look for patterns like: "HbA1c    5    4.0-6.0    %"
-        # Match: text then number then number-range then unit
         match = re.search(r'([A-Za-z\s]+)\s+(\d+\.?\d*)\s+.*?(\d+\.?\d*\s*-\s*\d+\.?\d*)\s+(\S+)', line)
         if match:
             name = match.group(1).strip()
             value = match.group(2)
-            ref_range = match.group(3)
-            unit = match.group(4)
             if len(name) > 2 and name.lower() not in ['the', 'and', 'for', 'test', 'result', 'flag', 'ref']:
                 test_values[name] = value
+
     test_patterns = {
         "Hemoglobin": r'(?:Hb|Hemoglobin|Haemoglobin|Hgb)[:\s]*(\d+\.?\d*)',
         "Blood Sugar": r'(?:Glucose|Sugar|BSL|FBS|RBS|Blood Sugar|Random Sugar|Fasting Sugar)[:\s]*(\d+\.?\d*)',
@@ -169,7 +142,6 @@ async def scan_document(
 
 Report text: {extracted_text[:500]}
 Test values found: {test_values}"""
-
             ai_analysis = ask_groq(prompt)
         except:
             ai_analysis = None
@@ -192,7 +164,6 @@ Test values found: {test_values}"""
         "pdf_download": f"/api/scanner/download-pdf/{report.id}",
         "extracted_text": extracted_text, "test_values": test_values,
         "biomarkers": biomarkers,
-        "ai_analysis": ai_analysis,
         "ai_interpretation": f"Found {len(biomarkers)} biomarkers. {len(medicines_found)} medicines detected." if biomarkers or medicines_found else "No biomarkers detected. Try a clearer image.",
         "medicines_found": medicines_found,
     }
@@ -206,7 +177,6 @@ def get_preview(report_id: str, db: Session = Depends(get_db)):
 
 @router.get("/complete-report/{report_id}")
 def get_complete_report(report_id: str, db: Session = Depends(get_db)):
-    """Get complete report data for sharing"""
     report = db.query(MedicalReport).order_by(MedicalReport.id.desc()).first()
     try:
         r = db.query(MedicalReport).filter(MedicalReport.id == int(report_id)).first()
@@ -238,7 +208,6 @@ def download_pdf(report_id: str, db: Session = Depends(get_db)):
     except: pass
     
     if report:
-        # Try enhanced first, then scanned, then original
         for path_attr in ['scanned_image_path', 'original_image_path']:
             path = getattr(report, path_attr, None)
             if path and os.path.exists(path):
