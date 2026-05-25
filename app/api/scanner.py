@@ -1,5 +1,5 @@
-# api/scanner.py
-# PROFESSIONAL DOCUMENT SCANNER API - LIGHTWEIGHT PERFORMANCE VERSION
+# app/api/scanner.py
+# PROFESSIONAL DOCUMENT SCANNER API - LIGHTWEIGHT PERFORMANCE VERSION WITH HIGHLY VISIBLE AI VERDICTS
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from fastapi.responses import FileResponse
 from app.services.professional_scanner import scanner
@@ -121,23 +121,42 @@ async def scan_document(
     
     if os.path.exists(temp_path): os.remove(temp_path)
     
+    # 🧠 AI Analysis via Groq - EXPLICIT MEDICAL STATUS VERDICT WITH FULL TEXT VISIBILITY
     ai_analysis = None
-    if extracted_text and len(extracted_text) > 50:
+    if extracted_text and len(extracted_text) > 20:
         try:
             from app.services.groq_llm import ask_groq
-            ai_analysis = ask_groq(f"Analyze this medical report: {extracted_text[:500]}")
-        except:
+            prompt = f"""You are the expert medical diagnostic AI module for the MAHFOOZ mobile application. 
+Analyze the extracted report text provided below and generate a clear safety status breakdown for the patient.
+
+👉 RULES FOR YOUR OUTPUT FORMAT:
+1. Begin your response with an explicit visual verdict banner. Use EXACTLY one of these two options:
+   "🟢 STATUS: REPORT APPEARS FINE" 
+   or 
+   "🔴 STATUS: ABNORMAL SECTOR / ISSUES DETECTED"
+2. Underneath the banner, write a concise 2-to-3 sentence diagnostic summary explaining what parameters triggered this verdict in simple, layman terms.
+3. List explicit next steps (e.g., "Schedule a routine checkup", "Consult your physician regarding parameter X", or any critical emergency indicators).
+
+Extracted Text:
+{extracted_text}
+
+Extracted Biomarkers / Key Values:
+{test_values}"""
+
+            ai_analysis = ask_groq(prompt)
+        except Exception as e:
+            print(f"Groq execution failed: {e}")
             ai_analysis = None
     
     if not ai_analysis:
         if biomarkers:
             abnormal = [b for b in biomarkers if b['status'] not in ['Normal']]
             if abnormal:
-                ai_analysis = f"⚠️ Found {len(abnormal)} abnormal values. Please consult a doctor."
+                ai_analysis = f"🔴 STATUS: ABNORMAL SECTOR / ISSUES DETECTED\n\n⚠️ Found {len(abnormal)} abnormal values: {', '.join(b['parameter'] for b in abnormal)}. Please consult a doctor."
             else:
-                ai_analysis = "✅ All test values appear normal."
+                ai_analysis = "🟢 STATUS: REPORT APPEARS FINE\n\n✅ All test values extracted by our fallback analyzer appear within typical normal reference boundaries."
         else:
-            ai_analysis = "📄 Report scanned successfully."
+            ai_analysis = "📄 Report scanned successfully. Original layout saved. AI parsing fallback completed with standard text storage structure."
     
     return {
         "success": True, "message": "Document scanned successfully",
