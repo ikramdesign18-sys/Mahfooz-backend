@@ -28,9 +28,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy the rest of the application code
 COPY . .
 
-# Inform Docker that the container listens on port 8080 at runtime
-EXPOSE 8080
+# SWITCH TO 8000: Inform Docker that the container listens on port 8000
+EXPOSE 8000
 
-# The absolute bulletproof command: runs through a clean shell array 
-# to dynamically map to Cloud Run's port injection seamlessly.
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+# SWITCH TO 8000: Run via shell array defaulting cleanly to 8000
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
