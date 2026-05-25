@@ -1,11 +1,11 @@
-# app/api/scanner.py
+# api/scanner.py
 # PROFESSIONAL DOCUMENT SCANNER API - LIGHTWEIGHT PERFORMANCE VERSION
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from fastapi.responses import FileResponse
-from app.services.professional_scanner import scanner
+from services.professional_scanner import scanner
 from sqlalchemy.orm import Session
-from app.core.database import get_db
-from app.models.report import MedicalReport
+from core.database import get_db
+from models.report import MedicalReport
 from datetime import date
 import os, shutil, uuid, re
 import pytesseract
@@ -25,8 +25,8 @@ async def scan_document(
     if file.content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Please upload JPG or PNG images")
     
-    # Render-safe directory setup using our runtime base
-    from app.core.config import UPLOAD_FOLDER
+    # Render-safe directory setup
+    from core.config import UPLOAD_FOLDER
     temp_dir = os.path.join(UPLOAD_FOLDER, "temp")
     os.makedirs(temp_dir, exist_ok=True)
     
@@ -43,19 +43,17 @@ async def scan_document(
             os.remove(temp_path)
         raise HTTPException(status_code=500, detail=result.get("error", "Scanning failed"))
     
-    # ⚡ EXCLUSIVELY USE PYTESSERACT (Bypasses Memory Crashes)
+    # Use Tesseract OCR
     extracted_text = ""
     try:
         img = Image.open(result["enhanced_path"])
         extracted_text = pytesseract.image_to_string(img, config='--psm 6')
     except Exception as e:
-        print(f"Tesseract core extraction exception: {e}")
+        print(f"Tesseract error: {e}")
         extracted_text = "Text extraction failed"
     
-    # Extract test values - try table format first
     test_values = {}
     
-    # Parse table format: lines with numbers in columns
     lines = extracted_text.split('\n')
     for line in lines:
         match = re.search(r'([A-Za-z\s]+)\s+(\d+\.?\d*)\s+.*?(\d+\.?\d*\s*-\s*\d+\.?\d*)\s+(\S+)', line)
@@ -83,7 +81,6 @@ async def scan_document(
         if match:
             test_values[test_name] = match.group(1)
     
-    # Build biomarkers
     normal_ranges = {
         "Hemoglobin": "13.5-17.5 g/dL", "Blood Sugar": "70-100 mg/dL",
         "Blood Pressure": "120/80 mmHg", "Cholesterol": "<200 mg/dL",
@@ -108,12 +105,10 @@ async def scan_document(
             "reference_range": normal_ranges.get(test_name, ""), "status": status
         })
     
-    # Find medicines
     medicines_found = []
     for med in ["paracetamol", "ibuprofen", "metformin", "amoxicillin", "omeprazole", "aspirin"]:
         if med in extracted_text.lower(): medicines_found.append(med)
     
-    # Save to database
     report = MedicalReport(
         family_member_id=int(family_member_id) if family_member_id.isdigit() else 1,
         report_type=document_type, title=title, report_date=date.today(),
@@ -133,16 +128,8 @@ async def scan_document(
     ai_analysis = None
     if extracted_text and len(extracted_text) > 50:
         try:
-            from app.services.groq_llm import ask_groq
-            prompt = f"""Analyze this medical report and tell the patient:
-1. Is this report normal or abnormal?
-2. What are the key findings in simple language?
-3. What should they do next?
-4. Any emergency warnings?
-
-Report text: {extracted_text[:500]}
-Test values found: {test_values}"""
-            ai_analysis = ask_groq(prompt)
+            from services.groq_llm import ask_groq
+            ai_analysis = ask_groq(f"Analyze this medical report: {extracted_text[:500]}")
         except:
             ai_analysis = None
     
@@ -150,11 +137,11 @@ Test values found: {test_values}"""
         if biomarkers:
             abnormal = [b for b in biomarkers if b['status'] not in ['Normal']]
             if abnormal:
-                ai_analysis = f"⚠️ Found {len(abnormal)} abnormal values: {', '.join(b['parameter'] for b in abnormal)}. Please consult a doctor."
+                ai_analysis = f"⚠️ Found {len(abnormal)} abnormal values. Please consult a doctor."
             else:
-                ai_analysis = "✅ All test values appear normal. Keep up the good health!"
+                ai_analysis = "✅ All test values appear normal."
         else:
-            ai_analysis = "📄 Report scanned. Original document saved. AI could not extract biomarkers from this image."
+            ai_analysis = "📄 Report scanned successfully."
     
     return {
         "success": True, "message": "Document scanned successfully",
@@ -164,7 +151,7 @@ Test values found: {test_values}"""
         "pdf_download": f"/api/scanner/download-pdf/{report.id}",
         "extracted_text": extracted_text, "test_values": test_values,
         "biomarkers": biomarkers,
-        "ai_interpretation": f"Found {len(biomarkers)} biomarkers. {len(medicines_found)} medicines detected." if biomarkers or medicines_found else "No biomarkers detected. Try a clearer image.",
+        "ai_interpretation": ai_analysis,
         "medicines_found": medicines_found,
     }
 
@@ -182,17 +169,14 @@ def get_complete_report(report_id: str, db: Session = Depends(get_db)):
         r = db.query(MedicalReport).filter(MedicalReport.id == int(report_id)).first()
         if r: report = r
     except: pass
-    
     if not report:
         raise HTTPException(status_code=404)
-    
     return {
         "title": report.title,
         "type": report.report_type,
         "date": str(report.report_date),
         "extracted_text": report.extracted_text,
         "test_values": report.test_values,
-        "diagnosis": report.diagnosis,
         "medicines": report.medicines_prescribed,
         "has_image": bool(report.scanned_image_path),
         "image_url": f"/api/scanner/preview/{report.id}",
@@ -206,12 +190,10 @@ def download_pdf(report_id: str, db: Session = Depends(get_db)):
         r = db.query(MedicalReport).filter(MedicalReport.id == int(report_id)).first()
         if r: report = r
     except: pass
-    
     if report:
         for path_attr in ['scanned_image_path', 'original_image_path']:
             path = getattr(report, path_attr, None)
             if path and os.path.exists(path):
                 return FileResponse(path, media_type="image/jpeg", 
-                                  filename=f"MAHFOOZ_Report_{report.id}.jpg",
-                                  headers={"Content-Disposition": f"attachment; filename=MAHFOOZ_Report_{report.id}.jpg"})
+                                  filename=f"MAHFOOZ_Report_{report.id}.jpg")
     raise HTTPException(status_code=404, detail="Report file not found")
