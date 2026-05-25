@@ -2,10 +2,10 @@
 # PROFESSIONAL DOCUMENT SCANNER API - LIGHTWEIGHT PERFORMANCE VERSION
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from fastapi.responses import FileResponse
-from services.professional_scanner import scanner
+from app.services.professional_scanner import scanner
 from sqlalchemy.orm import Session
-from core.database import get_db
-from models.report import MedicalReport
+from app.core.database import get_db
+from app.models.report import MedicalReport
 from datetime import date
 import os, shutil, uuid, re
 import pytesseract
@@ -25,8 +25,7 @@ async def scan_document(
     if file.content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Please upload JPG or PNG images")
     
-    # Render-safe directory setup
-    from core.config import UPLOAD_FOLDER
+    from app.core.config import UPLOAD_FOLDER
     temp_dir = os.path.join(UPLOAD_FOLDER, "temp")
     os.makedirs(temp_dir, exist_ok=True)
     
@@ -43,7 +42,6 @@ async def scan_document(
             os.remove(temp_path)
         raise HTTPException(status_code=500, detail=result.get("error", "Scanning failed"))
     
-    # Use Tesseract OCR
     extracted_text = ""
     try:
         img = Image.open(result["enhanced_path"])
@@ -53,7 +51,6 @@ async def scan_document(
         extracted_text = "Text extraction failed"
     
     test_values = {}
-    
     lines = extracted_text.split('\n')
     for line in lines:
         match = re.search(r'([A-Za-z\s]+)\s+(\d+\.?\d*)\s+.*?(\d+\.?\d*\s*-\s*\d+\.?\d*)\s+(\S+)', line)
@@ -124,11 +121,10 @@ async def scan_document(
     
     if os.path.exists(temp_path): os.remove(temp_path)
     
-    # AI Analysis via Groq
     ai_analysis = None
     if extracted_text and len(extracted_text) > 50:
         try:
-            from services.groq_llm import ask_groq
+            from app.services.groq_llm import ask_groq
             ai_analysis = ask_groq(f"Analyze this medical report: {extracted_text[:500]}")
         except:
             ai_analysis = None
